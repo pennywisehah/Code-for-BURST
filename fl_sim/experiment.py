@@ -47,6 +47,7 @@ class FederatedExperiment:
             non_iid_alpha=config.non_iid_alpha,
             download=config.download,
             seed=config.seed,
+            partition=config.partition,
         )
         self.model = build_model(config.dataset)
         self.global_state = {
@@ -62,8 +63,15 @@ class FederatedExperiment:
         model_name = "CNN2" if config.dataset in {"mnist", "fashionmnist"} else "ResNet18"
         print(
             f"Dataset={config.dataset} | Model={model_name} | "
-            f"Device={self.device} | Clients={config.num_clients}"
+            f"Device={self.device} | Clients={config.num_clients} | "
+            f"Partition={config.partition}"
         )
+        if all(label is not None for label in self.data.client_labels):
+            mapping = ", ".join(
+                f"{client_id}->{label}"
+                for client_id, label in enumerate(self.data.client_labels)
+            )
+            print(f"Client-to-label mapping: {mapping}")
 
     def _select_clients(self) -> list[int]:
         count = max(

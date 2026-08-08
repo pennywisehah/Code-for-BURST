@@ -42,5 +42,12 @@ class AggregationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             config.validate()
 
+    def test_config_requires_one_client_per_label(self):
+        config = ExperimentConfig(
+            dataset="mnist", partition="label_per_client", num_clients=9
+        )
+        with self.assertRaisesRegex(ValueError, "num_clients=10"):
+            config.validate()
+
 if __name__ == "__main__":
     unittest.main()

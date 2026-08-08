@@ -12,8 +12,14 @@ import torch
 from torch.utils.data import Dataset, Subset
 
 from .aggregation import fedavg
-from .data import load_federated_data
-from .model import StateDict, apply_update, evaluate, train_local
+from .data import load_federated_data, unique_dataset_labels
+from .model import (
+    StateDict,
+    apply_update,
+    evaluate,
+    evaluate_per_class,
+    train_local,
+)
 
 
 def _clone_state(state: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -297,6 +303,7 @@ def main() -> None:
         non_iid_alpha=float(config["non_iid_alpha"]),
         download=download,
         seed=int(config["seed"]),
+        partition=str(config.get("partition", "auto")),
     )
     forget_indices = _parse_indices(
         args.forget_local_indices, args.forget_indices_file
@@ -308,6 +315,7 @@ def main() -> None:
     if not args.forget_all_client_data and not forget_indices:
         raise ValueError("Partial-data unlearning requires forget indices.")
     requesting_client_dataset = data.clients[args.forget_client_id]
+    requesting_client_labels = unique_dataset_labels(requesting_client_dataset)
     forgotten_dataset: Dataset = (
         requesting_client_dataset
         if args.forget_all_client_data
@@ -351,6 +359,38 @@ def main() -> None:
         int(config["num_workers"]),
         device,
     )
+    original_per_label = evaluate_per_class(
+        history["final_state"],
+        data.test,
+        config["dataset"],
+        data.num_classes,
+        int(config["eval_batch_size"]),
+        int(config["num_workers"]),
+        device,
+    )
+    unlearned_per_label = evaluate_per_class(
+        unlearned_state,
+        data.test,
+        config["dataset"],
+        data.num_classes,
+        int(config["eval_batch_size"]),
+        int(config["num_workers"]),
+        device,
+    )
+    per_label_metrics = {}
+    for label in range(data.num_classes):
+        original_accuracy = original_per_label[str(label)]["accuracy"]
+        unlearned_accuracy = unlearned_per_label[str(label)]["accuracy"]
+        per_label_metrics[str(label)] = {
+            "sample_count": original_per_label[str(label)]["sample_count"],
+            "original_accuracy": original_accuracy,
+            "unlearned_accuracy": unlearned_accuracy,
+            "accuracy_drop": (
+                original_accuracy - unlearned_accuracy
+                if original_accuracy is not None and unlearned_accuracy is not None
+                else None
+            ),
+        }
     print(
         f"[Forget Set] Evaluating {len(forgotten_dataset)} forgotten samples...",
         flush=True,
@@ -377,12 +417,26 @@ def main() -> None:
         f"{unlearned_forget_metrics['accuracy']:.2%}",
         flush=True,
     )
+    forgotten_label = (
+        requesting_client_labels[0] if len(requesting_client_labels) == 1 else None
+    )
+    if forgotten_label is not None:
+        forgotten_label_metrics = per_label_metrics[str(forgotten_label)]
+        print(
+            f"[Forgotten Label {forgotten_label}] Test accuracy: "
+            f"{forgotten_label_metrics['original_accuracy']:.2%} -> "
+            f"{forgotten_label_metrics['unlearned_accuracy']:.2%} | "
+            f"drop={forgotten_label_metrics['accuracy_drop']:.2%}",
+            flush=True,
+        )
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     output_dir = (
         Path(args.output_dir)
         if args.output_dir
-        else run_dir / "unlearning_runs" / f"{timestamp}-federaser-client{args.forget_client_id}"
+        else run_dir
+        / "unlearning_runs"
+        / f"{timestamp}-federaser-client{args.forget_client_id}"
     )
     output_dir.mkdir(parents=True, exist_ok=False)
     summary = {
@@ -406,6 +460,14 @@ def main() -> None:
             "original_model": original_forget_metrics,
             "unlearned_model": unlearned_forget_metrics,
         },
+        "requesting_client_labels": requesting_client_labels,
+        "forgotten_label": forgotten_label,
+        "per_label_test_metrics": per_label_metrics,
+        "forgotten_label_metrics": (
+            per_label_metrics[str(forgotten_label)]
+            if forgotten_label is not None
+            else None
+        ),
         "calibration_history": calibration_history,
     }
     (output_dir / "summary.json").write_text(

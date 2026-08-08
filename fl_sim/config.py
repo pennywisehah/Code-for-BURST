@@ -13,6 +13,7 @@ class ExperimentConfig:
     data_dir: str = "data"
     download: bool = True
     iid: bool = False
+    partition: str = "auto"
     non_iid_alpha: float = 0.5
     num_clients: int = 20
     malicious_fraction: float = 0.2
@@ -52,12 +53,26 @@ class ExperimentConfig:
 
     def validate(self) -> None:
         self.dataset = self.dataset.lower()
+        self.partition = self.partition.lower()
         if self.dataset not in {"mnist", "fashionmnist", "cifar10", "cifar100"}:
             raise ValueError(
                 "dataset must be mnist, fashionmnist, cifar10, or cifar100"
             )
         if self.num_clients < 1:
             raise ValueError("num_clients must be at least 1")
+        if self.partition not in {"auto", "iid", "dirichlet", "label_per_client"}:
+            raise ValueError(
+                "partition must be auto, iid, dirichlet, or label_per_client"
+            )
+        expected_classes = 100 if self.dataset == "cifar100" else 10
+        if (
+            self.partition == "label_per_client"
+            and self.num_clients != expected_classes
+        ):
+            raise ValueError(
+                "label_per_client requires exactly one client per dataset class; "
+                f"{self.dataset} requires num_clients={expected_classes}"
+            )
         if not 0 <= self.malicious_fraction < 1:
             raise ValueError("malicious_fraction must be in [0, 1)")
         if not 0 < self.participation_fraction <= 1:

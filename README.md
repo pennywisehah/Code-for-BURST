@@ -86,6 +86,7 @@ python3 -m fl_sim --help
 | `data_dir` | 数据集保存目录 |
 | `download` | 是否自动下载数据 |
 | `iid` | `true` 为 IID，`false` 为 Dirichlet Non-IID |
+| `partition` | `auto`、`iid`、`dirichlet` 或每客户端单标签的 `label_per_client` |
 | `non_iid_alpha` | Dirichlet α；越小客户端数据差异越大 |
 | `num_clients` | 客户端总数 |
 | `participation_fraction` | 每轮客户端参与比例 |
@@ -186,3 +187,30 @@ FUA/bin/python -m fl_sim.unlearning \
 遗忘期间终端会逐个显示snapshot、客户端校准进度以及耗时。遗忘完成后会分别
 使用原始模型和遗忘模型评估被遗忘集合上的准确率。结果保存在`summary.json`
 的`forgotten_set_metrics`字段中。
+
+## 单标签客户端 Non-IID 遗忘测试
+
+`label_per_client` 会要求客户端数量等于数据集类别数，并固定令客户端ID与标签
+一致。对于MNIST的10个客户端，客户端0只持有数字0，客户端1只持有数字1，
+依此类推。训练并保存FedEraser历史：
+
+```bash
+FUA-clean/bin/python -m fl_sim \
+  --config config/mnist_label_per_client.json
+```
+
+例如遗忘只持有数字3的客户端3：
+
+```bash
+FUA-clean/bin/python -m fl_sim.unlearning \
+  --run-dir runs/训练目录 \
+  --forget-client-id 3 \
+  --forget-all-client-data \
+  --calibration-local-epochs 1 \
+  --device cpu \
+  --no-download
+```
+
+遗忘结果除了整体测试集和遗忘训练集指标，还会在`per_label_test_metrics`中记录
+每个标签的测试ACC，并在`forgotten_label_metrics`中单独记录数字3遗忘前后的
+ACC与下降幅度。这样可以区分目标标签遗忘效果和模型整体性能退化。

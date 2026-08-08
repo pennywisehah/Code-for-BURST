@@ -174,3 +174,47 @@ def evaluate(
         correct += (logits.argmax(dim=1) == targets).sum().item()
         total += targets.numel()
     return {"loss": total_loss / total, "accuracy": correct / total}
+
+
+@torch.no_grad()
+def evaluate_per_class(
+    state: Mapping[str, torch.Tensor],
+    dataset,
+    model_name: str,
+    num_classes: int,
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+) -> dict[str, dict[str, float | int | None]]:
+    """Evaluate class-wise accuracy in one pass over a labelled dataset."""
+    model = build_model(model_name).to(device)
+    model.load_state_dict(state)
+    model.eval()
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    counts = torch.zeros(num_classes, dtype=torch.long)
+    correct = torch.zeros(num_classes, dtype=torch.long)
+    for inputs, targets in loader:
+        predictions = model(inputs.to(device, non_blocking=True)).argmax(dim=1).cpu()
+        targets = targets.cpu()
+        counts += torch.bincount(targets, minlength=num_classes)
+        correct += torch.bincount(
+            targets[predictions == targets], minlength=num_classes
+        )
+    result: dict[str, dict[str, float | int | None]] = {}
+    for label in range(num_classes):
+        sample_count = int(counts[label].item())
+        result[str(label)] = {
+            "sample_count": sample_count,
+            "accuracy": (
+                float(correct[label].item() / sample_count)
+                if sample_count
+                else None
+            ),
+        }
+    return result

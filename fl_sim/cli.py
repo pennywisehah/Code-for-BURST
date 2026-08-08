@@ -21,6 +21,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--iid", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument(
+        "--partition",
+        choices=["auto", "iid", "dirichlet", "label_per_client"],
+        help=(
+            "Client data partition. auto preserves the legacy --iid/--no-iid "
+            "behavior; label_per_client assigns one class to each client."
+        ),
+    )
+    parser.add_argument(
         "--aggregation",
         choices=["fedavg", "krum", "trimmed_mean"],
         help="Server aggregation method.",

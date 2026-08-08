@@ -14,6 +14,7 @@ class FederatedData:
     test: Dataset
     num_classes: int
     input_channels: int
+    client_labels: list[int | None]
 
 
 _DATASET_META = {
@@ -100,6 +101,46 @@ def _dirichlet_partition(
     )
 
 
+def _label_per_client_partition(
+    targets: torch.Tensor,
+    num_clients: int,
+    num_classes: int,
+    generator: torch.Generator,
+) -> list[list[int]]:
+    """Assign every class to exactly one client with client_id == class_id."""
+    if num_clients != num_classes:
+        raise ValueError(
+            "label_per_client requires num_clients to equal the number of classes"
+        )
+    partitions: list[list[int]] = []
+    for label in range(num_classes):
+        label_indices = torch.where(targets == label)[0]
+        if len(label_indices) == 0:
+            raise ValueError(f"Dataset has no training samples for label {label}")
+        order = torch.randperm(len(label_indices), generator=generator)
+        partitions.append(label_indices[order].tolist())
+    return partitions
+
+
+def dataset_targets(dataset: Dataset) -> torch.Tensor:
+    """Return labels without applying image transforms when metadata is available."""
+    if isinstance(dataset, Subset):
+        parent_targets = dataset_targets(dataset.dataset)
+        indices = torch.as_tensor(dataset.indices, dtype=torch.long)
+        return parent_targets[indices]
+    if hasattr(dataset, "targets"):
+        return torch.as_tensor(dataset.targets, dtype=torch.long)
+    if hasattr(dataset, "tensors") and len(dataset.tensors) >= 2:
+        return torch.as_tensor(dataset.tensors[1], dtype=torch.long)
+    return torch.tensor([int(dataset[index][1]) for index in range(len(dataset))])
+
+
+def unique_dataset_labels(dataset: Dataset) -> list[int]:
+    return sorted(
+        int(label) for label in torch.unique(dataset_targets(dataset)).tolist()
+    )
+
+
 def load_federated_data(
     dataset_name: str,
     data_dir: str,
@@ -108,6 +149,7 @@ def load_federated_data(
     non_iid_alpha: float,
     download: bool,
     seed: int,
+    partition: str | None = None,
 ) -> FederatedData:
     dataset_name = dataset_name.lower()
     dataset_class, num_classes, input_channels = _DATASET_META[dataset_name]
@@ -121,12 +163,28 @@ def load_federated_data(
     )
     targets = torch.as_tensor(train_set.targets, dtype=torch.long)
     generator = torch.Generator().manual_seed(seed)
-    if iid:
+    resolved_partition = (partition or "auto").lower()
+    if resolved_partition == "auto":
+        resolved_partition = "iid" if iid else "dirichlet"
+    if resolved_partition == "iid":
         indices = _iid_partition(len(train_set), num_clients, generator)
-    else:
+        client_labels: list[int | None] = [None] * num_clients
+    elif resolved_partition == "dirichlet":
         torch.manual_seed(seed)
         indices = _dirichlet_partition(
             targets, num_clients, num_classes, non_iid_alpha, generator
         )
+        client_labels = [None] * num_clients
+    elif resolved_partition == "label_per_client":
+        indices = _label_per_client_partition(
+            targets, num_clients, num_classes, generator
+        )
+        client_labels = list(range(num_classes))
+    else:
+        raise ValueError(
+            "partition must be auto, iid, dirichlet, or label_per_client"
+        )
     clients = [Subset(train_set, client_indices) for client_indices in indices]
-    return FederatedData(clients, test_set, num_classes, input_channels)
+    return FederatedData(
+        clients, test_set, num_classes, input_channels, client_labels
+    )
