@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+FUA/
+FUA-clean/
+runs/
+data/
+pood_runs/
