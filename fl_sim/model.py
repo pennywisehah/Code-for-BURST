@@ -7,6 +7,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
+from torchvision.models.resnet import ResNet
 
 StateDict = OrderedDict[str, torch.Tensor]
 
@@ -46,6 +47,26 @@ class CNN2(nn.Module):
         features = self.classifier[0](features)
         features = self.classifier[1](features)
         return self.classifier[2](features)
+
+
+def extract_model_features(model: nn.Module, inputs: torch.Tensor) -> torch.Tensor:
+    """Return the representation immediately before the classification head."""
+    if isinstance(model, CNN2):
+        return model.extract_features(inputs)
+    if isinstance(model, ResNet):
+        features = model.conv1(inputs)
+        features = model.bn1(features)
+        features = model.relu(features)
+        features = model.maxpool(features)
+        features = model.layer1(features)
+        features = model.layer2(features)
+        features = model.layer3(features)
+        features = model.layer4(features)
+        features = model.avgpool(features)
+        return torch.flatten(features, 1)
+    raise TypeError(
+        f"Feature extraction is not implemented for {type(model).__name__}."
+    )
 
 
 def build_model(dataset_name: str) -> nn.Module:

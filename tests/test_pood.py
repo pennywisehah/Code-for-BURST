@@ -8,6 +8,7 @@ from fl_sim.model import build_model
 from fl_sim.pood import (
     collect_candidates,
     cosine_knn,
+    l2_knn,
     same_label_selection,
     selected_feature_metrics,
     optimize_universal_perturbation,
@@ -42,6 +43,13 @@ class PoodTests(unittest.TestCase):
         indices, similarities = cosine_knn(target, candidates, k=2)
         self.assertEqual(indices.tolist(), [2, 1])
         self.assertGreater(similarities[0].item(), similarities[1].item())
+
+    def test_l2_knn_returns_smallest_raw_distances_in_order(self):
+        target = torch.tensor([[1.0, 0.0]])
+        candidates = torch.tensor([[10.0, 0.0], [1.2, 0.1], [0.0, 1.0]])
+        indices, distances = l2_knn(target, candidates, k=2)
+        self.assertEqual(indices.tolist(), [1, 2])
+        self.assertLess(distances[0].item(), distances[1].item())
 
     def test_same_label_selection_prefers_largest_nearest_group(self):
         label, positions = same_label_selection([8, 2, 8, 4, 8, 2], p=3)

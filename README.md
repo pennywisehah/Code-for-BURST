@@ -152,6 +152,127 @@ FUA/bin/python -m fl_sim.pood \
 kNN 邻居图、同标签 POOD 种子图和添加通用扰动后的 `perturbed_pood.png`。
 `summary.json` 会记录优化前后的平均特征距离、平均目标特征相似度以及扰动范数。
 
+## CIFAR-10/CIFAR-100 PUA 集成测试
+
+`fl_sim.CIFAR_PUA` 使用 CIFAR-10 作为联邦训练与目标数据集，使用 CIFAR-100
+测试集作为 POOD 候选池。由于两个数据集的标签空间不同，程序以 CIFAR-100
+真实类别保证候选的语义一致性，并使用 CIFAR-10 代理模型的非目标预测作为
+注入训练标签。检索在 ResNet18 的 512 维倒数第二层特征空间中执行精确余弦
+Top-K。
+
+先训练一个 CIFAR-10 代理模型：
+
+```bash
+FUA-clean/bin/python -m fl_sim \
+  --dataset cifar10 \
+  --data-dir data \
+  --download \
+  --partition iid \
+  --aggregation fedavg \
+  --num-clients 10 \
+  --malicious-fraction 0 \
+  --participation-fraction 1 \
+  --attack none \
+  --rounds 50 \
+  --local-epochs 1 \
+  --learning-rate 0.01 \
+  --batch-size 128 \
+  --eval-batch-size 256 \
+  --device cpu \
+  --output-dir runs/cifar10-proxy
+```
+
+再把生成的 `model.pt` 路径传给端到端 PUA：
+
+```bash
+FUA-clean/bin/python -m fl_sim.CIFAR_PUA \
+  --proxy-checkpoint "runs/cifar10-proxy/实验目录/model.pt" \
+  --data-dir data \
+  --download \
+  --device cpu \
+  --non-iid-alpha 0.1 \
+  --num-clients 10 \
+  --malicious-client-id 6 \
+  --target-label 3 \
+  --candidate-count 5000 \
+  --k 500 \
+  --p 5 \
+  --perturb-steps 200 \
+  --perturb-lr 0.005 \
+  --perturb-epsilon 0.031372549 \
+  --poison-repeats 100 \
+  --rounds 50 \
+  --local-epochs 1 \
+  --learning-rate 0.01 \
+  --batch-size 128 \
+  --eval-batch-size 256 \
+  --unlearning-delta-t 5 \
+  --calibration-local-epochs 1
+```
+
+该入口会自动完成 POOD 检索与扰动、Dirichlet Non-IID 联邦训练、注入记录的
+部分数据 FedEraser，以及全局、遗忘集、目标样本和各 CIFAR-10 类别的前后评估。
+结果默认写入 `cifar_pua_runs/`。
+
+## CIFAR-10/STL-10 PUA 集成测试
+
+`fl_sim.STL_PUA` 保留 CIFAR-10 作为联邦训练集和目标数据集，使用 STL-10
+有标签测试集作为 POOD 候选池。STL-10 图片会从 `96×96` 缩放到 `32×32`，
+并使用 CIFAR-10 的归一化参数。标签使用固定映射：airplane、bird、car、cat、
+deer、dog、horse、ship、truck 分别映射到对应 CIFAR-10 类别，其中 car 映射为
+automobile；无法映射的 monkey 被排除。映射后与目标相同的类别也会被排除，
+因此注入标签来自 STL-10 真实标签映射，而不是代理模型伪标签。
+
+Windows PowerShell 完整实验指令：
+
+```powershell
+python -m fl_sim.STL_PUA `
+  --proxy-checkpoint "runs/cifar10-proxy/20260812-190736-908765-cifar10-fedavg-seed42/model.pt" `
+  --data-dir data `
+  --download `
+  --device cuda `
+  --non-iid-alpha 0.1 `
+  --num-clients 10 `
+  --malicious-client-id 6 `
+  --target-label 2 `
+  --candidate-count 5000 `
+  --k 200 `
+  --p 5 `
+  --perturb-steps 200 `
+  --perturb-lr 0.005 `
+  --perturb-epsilon 0.031372549 `
+  --poison-repeats 100 `
+  --rounds 50 `
+  --local-epochs 1 `
+  --learning-rate 0.01 `
+  --batch-size 128 `
+  --eval-batch-size 256 `
+  --unlearning-delta-t 5 `
+  --calibration-local-epochs 1
+```
+
+首次运行使用 `--download` 下载 STL-10，以后可改为 `--no-download`。结果默认
+写入 `stl_pua_runs/`，其中 `summary.json` 会同时保存 STL-10 原始类别、映射后
+CIFAR-10 注入类别、缩放方式、选中源索引以及 Unlearning 前后指标。
+
+### POOD 检索消融与必要对照
+
+`fl_sim.STL_PUA` 默认使用余弦 Top-K 和优化后的 POOD。以下参数可在保持训练、
+目标和 FedEraser 设置不变时执行消融：
+
+```text
+--retrieval-metric cosine|l2
+--experiment-mode optimized|no_pood|unperturbed|random
+```
+
+- `no_pood`：不注入也不删除数据，只执行相同的 FedEraser 校准回放；结果中的
+  POOD 指标标记为 probe-only。
+- `unperturbed`：注入 Top-K 检索得到的原始 POOD，不执行扰动优化。
+- `random`：从 Top-K 选定的同一 STL-10 语义/CIFAR-10 标签组内随机取 `p` 张
+  原始图片，控制类别和注入标签不变。
+- `l2`：用未经归一化的512维特征欧氏距离执行精确 Top-K；默认 `cosine` 行为
+  与旧版本一致。
+
 ## FedEraser部分数据遗忘
 
 FedEraser需要在原始联邦训练期间保存历史客户端更新。`unlearning_delta_t`

@@ -8,3 +8,5 @@ data/
 pood_runs/
 tuning_runs/
 pua_runs/
+cifar_pua_runs/
+stl_pua_runs/

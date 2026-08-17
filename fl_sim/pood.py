@@ -147,6 +147,38 @@ def cosine_knn(
     return indices, values
 
 
+def l2_knn(
+    target_feature: torch.Tensor,
+    candidate_features: torch.Tensor,
+    k: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the k candidates with the smallest raw Euclidean distance."""
+    if target_feature.shape != (1, candidate_features.shape[1]):
+        raise ValueError("Target and candidate feature dimensions do not match.")
+    if not 1 <= k <= len(candidate_features):
+        raise ValueError("k must be between 1 and the number of candidates.")
+    distances = torch.linalg.vector_norm(
+        candidate_features.float() - target_feature.float(), dim=1
+    )
+    values, indices = torch.topk(distances, k=k, largest=False)
+    return indices, values
+
+
+def feature_knn(
+    target_feature: torch.Tensor,
+    candidate_features: torch.Tensor,
+    k: int,
+    metric: str = "cosine",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run exact Top-K retrieval with cosine similarity or raw L2 distance."""
+    metric = metric.lower()
+    if metric == "cosine":
+        return cosine_knn(target_feature, candidate_features, k)
+    if metric == "l2":
+        return l2_knn(target_feature, candidate_features, k)
+    raise ValueError("retrieval metric must be 'cosine' or 'l2'.")
+
+
 def same_label_selection(
     neighbor_labels: Sequence[int], p: int
 ) -> tuple[int, list[int]]:

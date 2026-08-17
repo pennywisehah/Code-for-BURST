@@ -135,6 +135,7 @@ def federaser_unlearn(
     num_workers: int,
     device: torch.device,
     seed: int,
+    reconstruct_without_forgetting: bool = False,
 ) -> tuple[dict[str, torch.Tensor], list[dict[str, float | int]]]:
     """Run FedEraser calibration for client-level or partial client-data removal."""
     if history.get("method") != "federaser":
@@ -146,13 +147,21 @@ def federaser_unlearn(
         raise ValueError("forget_client_id is outside the configured client range.")
     if calibration_local_epochs < 1 or calibration_learning_rate <= 0:
         raise ValueError("Calibration epochs and learning rate must be positive.")
+    if reconstruct_without_forgetting and (forget_all_client_data or forget_local_indices):
+        raise ValueError(
+            "Reconstruction without forgetting cannot include a forget request."
+        )
     if forget_all_client_data and forget_local_indices:
         raise ValueError("Choose either full-client or partial-data unlearning, not both.")
-    if not forget_all_client_data and not forget_local_indices:
+    if (
+        not reconstruct_without_forgetting
+        and not forget_all_client_data
+        and not forget_local_indices
+    ):
         raise ValueError("Partial-data unlearning requires at least one local index.")
 
     retained_datasets = list(client_datasets)
-    if not forget_all_client_data:
+    if not reconstruct_without_forgetting and not forget_all_client_data:
         retained_datasets[forget_client_id] = remove_local_samples(
             retained_datasets[forget_client_id], forget_local_indices or []
         )

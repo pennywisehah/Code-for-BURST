@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import random
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -64,14 +65,15 @@ class FederatedExperiment:
         print(
             f"Dataset={config.dataset} | Model={model_name} | "
             f"Device={self.device} | Clients={config.num_clients} | "
-            f"Partition={config.partition}"
+            f"Partition={config.partition}",
+            flush=True,
         )
         if all(label is not None for label in self.data.client_labels):
             mapping = ", ".join(
                 f"{client_id}->{label}"
                 for client_id, label in enumerate(self.data.client_labels)
             )
-            print(f"Client-to-label mapping: {mapping}")
+            print(f"Client-to-label mapping: {mapping}", flush=True)
 
     def _select_clients(self) -> list[int]:
         count = max(
@@ -90,11 +92,24 @@ class FederatedExperiment:
             else None
         )
         for round_number in range(1, self.config.rounds + 1):
+            round_start = time.perf_counter()
             selected = self._select_clients()
             updates = []
             sample_counts = []
             selected_malicious = 0
-            for client_id in selected:
+            print(
+                f"Round {round_number:03d}/{self.config.rounds} started | "
+                f"selected_clients={len(selected)}",
+                flush=True,
+            )
+            for client_number, client_id in enumerate(selected, start=1):
+                client_start = time.perf_counter()
+                client_sample_count = len(self.data.clients[client_id])
+                print(
+                    f"  Client {client_number:02d}/{len(selected):02d} | "
+                    f"id={client_id} | samples={client_sample_count} | training...",
+                    flush=True,
+                )
                 update = train_local(
                     global_state=self.global_state,
                     dataset=self.data.clients[client_id],
@@ -118,7 +133,14 @@ class FederatedExperiment:
                         self.attack_generator,
                     )
                 updates.append(update)
-                sample_counts.append(len(self.data.clients[client_id]))
+                sample_counts.append(client_sample_count)
+                print(
+                    f"  Client {client_number:02d}/{len(selected):02d} | "
+                    f"id={client_id} | completed | "
+                    f"progress={client_number / len(selected):.0%} | "
+                    f"elapsed={time.perf_counter() - client_start:.1f}s",
+                    flush=True,
+                )
 
             if unlearning_recorder is not None:
                 unlearning_recorder.record_round(
@@ -160,7 +182,9 @@ class FederatedExperiment:
             print(
                 f"Round {round_number:03d}/{self.config.rounds} | "
                 f"loss={metrics['loss']:.4f} | accuracy={metrics['accuracy']:.2%} | "
-                f"clients={len(selected)} | malicious={selected_malicious}"
+                f"clients={len(selected)} | malicious={selected_malicious} | "
+                f"elapsed={time.perf_counter() - round_start:.1f}s",
+                flush=True,
             )
         self._save_results(run_dir, history)
         if unlearning_recorder is not None:

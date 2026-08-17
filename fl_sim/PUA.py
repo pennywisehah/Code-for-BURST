@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import random
+import time
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -446,11 +447,24 @@ def run(args: argparse.Namespace) -> Path:
         flush=True,
     )
     for round_number in range(1, args.rounds + 1):
+        round_start = time.perf_counter()
         selected_clients = list(range(args.num_clients))
         rng.shuffle(selected_clients)
         updates = []
         sample_counts = []
-        for client_id in selected_clients:
+        print(
+            f"Round {round_number:03d}/{args.rounds} started | "
+            f"selected_clients={len(selected_clients)}",
+            flush=True,
+        )
+        for client_number, client_id in enumerate(selected_clients, start=1):
+            client_start = time.perf_counter()
+            client_sample_count = len(client_datasets[client_id])
+            print(
+                f"  Client {client_number:02d}/{len(selected_clients):02d} | "
+                f"id={client_id} | samples={client_sample_count} | training...",
+                flush=True,
+            )
             update = train_local(
                 global_state=global_state,
                 dataset=client_datasets[client_id],
@@ -465,7 +479,14 @@ def run(args: argparse.Namespace) -> Path:
                 seed=args.seed + round_number * 100_000 + client_id,
             )
             updates.append(update)
-            sample_counts.append(len(client_datasets[client_id]))
+            sample_counts.append(client_sample_count)
+            print(
+                f"  Client {client_number:02d}/{len(selected_clients):02d} | "
+                f"id={client_id} | completed | "
+                f"progress={client_number / len(selected_clients):.0%} | "
+                f"elapsed={time.perf_counter() - client_start:.1f}s",
+                flush=True,
+            )
         recorder.record_round(
             round_number, selected_clients, updates, sample_counts
         )
@@ -496,7 +517,8 @@ def run(args: argparse.Namespace) -> Path:
             f"Round {round_number:03d}/{args.rounds} | "
             f"loss={metrics['loss']:.4f} | accuracy={metrics['accuracy']:.2%} | "
             f"target_pred={target_round['prediction']} | "
-            f"target_conf={target_round['true_label_confidence']:.2%}",
+            f"target_conf={target_round['true_label_confidence']:.2%} | "
+            f"elapsed={time.perf_counter() - round_start:.1f}s",
             flush=True,
         )
 
