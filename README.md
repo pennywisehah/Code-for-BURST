@@ -273,6 +273,15 @@ CIFAR-10 注入类别、缩放方式、选中源索引以及 Unlearning 前后�
 - `l2`：用未经归一化的512维特征欧氏距离执行精确 Top-K；默认 `cosine` 行为
   与旧版本一致。
 
+端到端 `fl_sim.PUA`、`fl_sim.CIFAR_PUA` 和 `fl_sim.STL_PUA` 会直接使用内存中的
+FedEraser 历史完成本次 Unlearning，默认不再写入体积很大的
+`federaser_history.pt`。只有需要稍后使用 `fl_sim.unlearning` 独立重放同一次训练
+时，才在集成命令中加入：
+
+```text
+--keep-unlearning-history
+```
+
 ## FedEraser部分数据遗忘
 
 FedEraser需要在原始联邦训练期间保存历史客户端更新。`unlearning_delta_t`
@@ -287,7 +296,8 @@ FUA/bin/python -m fl_sim \
   --unlearning-delta-t 5
 ```
 
-训练目录中会新增`federaser_history.pt`。部分遗忘时，索引指请求客户端本地
+这里是独立训练入口，只有显式指定 `--save-unlearning-history` 才会在训练目录中
+新增 `federaser_history.pt`。部分遗忘时，索引指请求客户端本地
 数据集中的位置，而不是MNIST原始数据集的全局索引。例如遗忘客户端0的本地
 位置10、11和12：
 

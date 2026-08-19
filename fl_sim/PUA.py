@@ -245,6 +245,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float, default=0.0005)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--unlearning-delta-t", type=int, default=5)
+    parser.add_argument(
+        "--keep-unlearning-history",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Persist federaser_history.pt for later standalone replay. "
+            "The integrated run uses the in-memory history and does not save it "
+            "by default."
+        ),
+    )
     parser.add_argument("--calibration-local-epochs", type=int, default=1)
     parser.add_argument("--calibration-learning-rate", type=float)
     return parser
@@ -533,7 +543,16 @@ def run(args: argparse.Namespace) -> Path:
         "injected_poison_records": len(poison_local_indices),
     }
     history = recorder.build_payload(history_config, global_state)
-    torch.save(history, run_dir / "federaser_history.pt")
+    history_path = run_dir / "federaser_history.pt"
+    if args.keep_unlearning_history:
+        torch.save(history, history_path)
+        print(f"FedEraser history saved to {history_path}", flush=True)
+    else:
+        print(
+            "FedEraser history kept in memory only; "
+            "use --keep-unlearning-history to persist it.",
+            flush=True,
+        )
     torch.save(
         {"dataset": "mnist", "state_dict": global_state, "config": history_config},
         run_dir / "model_before_unlearning.pt",
@@ -700,6 +719,12 @@ def run(args: argparse.Namespace) -> Path:
             "method": "federaser_partial_data",
             "delta_t": args.unlearning_delta_t,
             "snapshot_count": len(history["snapshots"]),
+            "history_saved_to_disk": args.keep_unlearning_history,
+            "history_path": (
+                str(history_path.resolve())
+                if args.keep_unlearning_history
+                else None
+            ),
             "calibration_local_epochs": args.calibration_local_epochs,
             "calibration_learning_rate": calibration_lr,
             "forgotten_injected_record_count": len(poison_local_indices),

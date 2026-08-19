@@ -106,13 +106,21 @@ class CifarPoodTests(unittest.TestCase):
         self.assertAlmostEqual(args.perturb_epsilon, 8 / 255)
         self.assertEqual(args.retrieval_metric, "cosine")
         self.assertEqual(args.experiment_mode, "optimized")
+        self.assertFalse(args.keep_unlearning_history)
 
     def test_control_and_l2_options_are_available(self):
         args = build_parser().parse_args(
-            ["--retrieval-metric", "l2", "--experiment-mode", "unperturbed"]
+            [
+                "--retrieval-metric",
+                "l2",
+                "--experiment-mode",
+                "unperturbed",
+                "--keep-unlearning-history",
+            ]
         )
         self.assertEqual(args.retrieval_metric, "l2")
         self.assertEqual(args.experiment_mode, "unperturbed")
+        self.assertTrue(args.keep_unlearning_history)
 
 
 if __name__ == "__main__":

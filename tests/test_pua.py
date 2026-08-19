@@ -22,6 +22,7 @@ class PuaIntegrationUnitTests(unittest.TestCase):
         args = build_parser().parse_args([])
         self.assertEqual(args.non_iid_alpha, DEFAULT_DIRICHLET_ALPHA)
         self.assertEqual(args.non_iid_alpha, 0.1)
+        self.assertFalse(args.keep_unlearning_history)
         self.assertGreaterEqual(args.k, args.p)
 
     def test_poisoned_dataset_tracks_every_injected_local_index(self):
