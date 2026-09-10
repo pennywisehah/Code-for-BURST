@@ -27,7 +27,7 @@ def _clone_state(state: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
 
 
 class FedEraserHistoryRecorder:
-    """Retain client updates every delta_t rounds for later FedEraser calibration."""
+    """Accumulate each client's updates over delta_t-round calibration windows."""
 
     def __init__(self, initial_state: Mapping[str, torch.Tensor], delta_t: int):
         if delta_t < 1:
@@ -35,23 +35,38 @@ class FedEraserHistoryRecorder:
         self.delta_t = delta_t
         self.initial_state = _clone_state(initial_state)
         self.snapshots: list[dict] = []
-        self._last_snapshot: dict | None = None
+        self._window_start_round: int | None = None
+        self._last_round: int | None = None
+        self._window_client_ids: list[int] = []
+        self._window_updates: dict[int, dict[str, torch.Tensor]] = {}
+        self._window_sample_counts: dict[int, int] = {}
 
-    @staticmethod
-    def _snapshot(
-        round_number: int,
-        client_ids: Sequence[int],
-        updates: Sequence[Mapping[str, torch.Tensor]],
-        sample_counts: Sequence[int],
-    ) -> dict:
-        if not (len(client_ids) == len(updates) == len(sample_counts)):
-            raise ValueError("Client ids, updates, and sample counts must be aligned.")
-        return {
-            "round": int(round_number),
-            "client_ids": [int(client_id) for client_id in client_ids],
-            "sample_counts": [int(count) for count in sample_counts],
-            "updates": [_clone_state(update) for update in updates],
-        }
+    def _flush_window(self, end_round: int) -> None:
+        if self._window_start_round is None or not self._window_updates:
+            raise RuntimeError("Cannot flush an empty FedEraser history window.")
+        client_ids = list(self._window_client_ids)
+        self.snapshots.append(
+            {
+                "start_round": self._window_start_round,
+                "round": int(end_round),
+                "interval_round_count": (
+                    int(end_round) - self._window_start_round + 1
+                ),
+                "client_ids": client_ids,
+                "sample_counts": [
+                    self._window_sample_counts[client_id]
+                    for client_id in client_ids
+                ],
+                "updates": [
+                    self._window_updates[client_id]
+                    for client_id in client_ids
+                ],
+            }
+        )
+        self._window_start_round = None
+        self._window_client_ids = []
+        self._window_updates = {}
+        self._window_sample_counts = {}
 
     def record_round(
         self,
@@ -60,24 +75,50 @@ class FedEraserHistoryRecorder:
         updates: Sequence[Mapping[str, torch.Tensor]],
         sample_counts: Sequence[int],
     ) -> None:
-        snapshot = self._snapshot(round_number, client_ids, updates, sample_counts)
-        self._last_snapshot = snapshot
+        if not (len(client_ids) == len(updates) == len(sample_counts)):
+            raise ValueError("Client ids, updates, and sample counts must be aligned.")
+        if self._last_round is not None and round_number != self._last_round + 1:
+            raise ValueError("FedEraser history rounds must be consecutive.")
+        if len(set(int(client_id) for client_id in client_ids)) != len(client_ids):
+            raise ValueError("A client can appear at most once in each training round.")
+        if self._window_start_round is None:
+            self._window_start_round = int(round_number)
+
+        for raw_client_id, update, raw_sample_count in zip(
+            client_ids, updates, sample_counts
+        ):
+            client_id = int(raw_client_id)
+            if client_id not in self._window_updates:
+                self._window_client_ids.append(client_id)
+                self._window_updates[client_id] = _clone_state(update)
+            else:
+                accumulated = self._window_updates[client_id]
+                if tuple(accumulated) != tuple(update):
+                    raise ValueError(
+                        "A client's interval updates must have identical keys."
+                    )
+                for name, value in update.items():
+                    accumulated[name].add_(value.detach().cpu())
+            self._window_sample_counts[client_id] = int(raw_sample_count)
+
+        self._last_round = int(round_number)
         if round_number % self.delta_t == 0:
-            self.snapshots.append(snapshot)
+            self._flush_window(round_number)
 
     def build_payload(
         self,
         config: Mapping,
         final_state: Mapping[str, torch.Tensor],
     ) -> dict:
-        if self._last_snapshot is None:
+        if self._last_round is None:
             raise RuntimeError("Cannot save an empty FedEraser history.")
-        if not self.snapshots or self.snapshots[-1]["round"] != self._last_snapshot["round"]:
-            self.snapshots.append(self._last_snapshot)
+        if self._window_start_round is not None:
+            self._flush_window(self._last_round)
         return {
-            "format_version": 1,
+            "format_version": 2,
             "method": "federaser",
             "delta_t": self.delta_t,
+            "history_update_semantics": "per_client_interval_sum",
             "config": dict(config),
             "initial_state": self.initial_state,
             "final_state": _clone_state(final_state),
@@ -174,6 +215,13 @@ def federaser_unlearn(
 
     for snapshot_number, snapshot in enumerate(history["snapshots"], start=1):
         snapshot_start = time.perf_counter()
+        interval_start = int(snapshot.get("start_round", snapshot["round"]))
+        interval_end = int(snapshot["round"])
+        interval_round_count = int(
+            snapshot.get(
+                "interval_round_count", interval_end - interval_start + 1
+            )
+        )
         retained_client_ids = [
             int(client_id)
             for client_id in snapshot["client_ids"]
@@ -181,7 +229,7 @@ def federaser_unlearn(
         ]
         print(
             f"[FedEraser {snapshot_number:02d}/{total_snapshots:02d}] "
-            f"history_round={snapshot['round']} | "
+            f"history_interval={interval_start}-{interval_end} | "
             f"retained_clients={len(retained_client_ids)}",
             flush=True,
         )
@@ -240,7 +288,10 @@ def federaser_unlearn(
         unlearned_state = apply_update(unlearned_state, aggregated)
         calibration_history.append(
             {
-                "history_round": int(snapshot["round"]),
+                "history_round": interval_end,
+                "history_interval_start": interval_start,
+                "history_interval_end": interval_end,
+                "interval_round_count": interval_round_count,
                 "retained_clients": len(calibrated_updates),
                 "retained_samples": sum(retained_counts),
                 "historical_layer_norm_sum": historical_norm_sum,
@@ -452,6 +503,9 @@ def main() -> None:
         "method": "federaser",
         "source_run": str(run_dir.resolve()),
         "delta_t": int(history["delta_t"]),
+        "history_update_semantics": history.get(
+            "history_update_semantics", "single_retained_round"
+        ),
         "forget_client_id": args.forget_client_id,
         "forget_mode": "full_client" if args.forget_all_client_data else "partial_data",
         "forgotten_local_indices": forget_indices,

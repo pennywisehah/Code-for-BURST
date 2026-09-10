@@ -195,6 +195,19 @@ def evaluate_target(
     }
 
 
+def resolve_pood_training_label(
+    label_mode: str,
+    retrieved_group_label: int,
+    target_label: int,
+) -> int:
+    """Resolve the class assigned to injected POOD samples during training."""
+    if label_mode == "source":
+        return retrieved_group_label
+    if label_mode == "target":
+        return target_label
+    raise ValueError(f"Unsupported POOD training label mode: {label_mode}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -243,6 +256,16 @@ def build_parser() -> argparse.ArgumentParser:
             "optimized runs the PUA baseline; no_pood performs calibration replay "
             "without injection or deletion; unperturbed injects retrieved raw POOD; "
             "random injects unperturbed samples from the same semantic/label group."
+        ),
+    )
+    parser.add_argument(
+        "--pood-training-label",
+        choices=["source", "target"],
+        default="source",
+        help=(
+            "Label assigned to injected POOD samples during federated training. "
+            "source preserves the selected POOD class mapping; target assigns "
+            "the CIFAR-10 target sample label."
         ),
     )
     parser.add_argument("--perturb-steps", type=int, default=200)
@@ -460,10 +483,18 @@ def run(args: argparse.Namespace) -> Path:
         )
 
     source_class_name = pood_pool.classes[selected_source_label]
+    retrieved_group_label = poison_label
+    poison_training_label = resolve_pood_training_label(
+        args.pood_training_label,
+        retrieved_group_label,
+        target_label,
+    )
     selected_images = candidate_images[selected_candidate_positions]
     selected_source_labels = candidate_source_labels[selected_candidate_positions]
     selected_features = candidate_features[selected_candidate_positions]
-    poison_labels = torch.full((args.p,), poison_label, dtype=torch.long)
+    poison_labels = torch.full(
+        (args.p,), poison_training_label, dtype=torch.long
+    )
     selection_metrics = summarize_selected_features(
         target_feature, selected_features
     )
@@ -568,13 +599,17 @@ def run(args: argparse.Namespace) -> Path:
         f"CIFAR PUA | train=CIFAR10 | POOD={pood_dataset_name.upper()} | "
         f"alpha={args.non_iid_alpha:g} | clients={args.num_clients} | "
         f"mode={args.experiment_mode} | retrieval={args.retrieval_metric} | "
+        f"training_label={args.pood_training_label} | "
         f"device={device}",
         flush=True,
     )
     print(
         f"target={cifar10_test.classes[target_label]}({target_label}) | "
-        f"POOD={source_class_name}({selected_source_label}) | poison_label="
-        f"{cifar10_test.classes[poison_label]}({poison_label}) | "
+        f"POOD={source_class_name}({selected_source_label}) | mapped_label="
+        f"{cifar10_test.classes[retrieved_group_label]}"
+        f"({retrieved_group_label}) | training_label="
+        f"{cifar10_test.classes[poison_training_label]}"
+        f"({poison_training_label}) | "
         f"unique={args.p} | injected={len(poison_local_indices)}",
         flush=True,
     )
@@ -640,7 +675,9 @@ def run(args: argparse.Namespace) -> Path:
         "label_strategy": label_strategy,
         "experiment_mode": args.experiment_mode,
         "retrieval_metric": args.retrieval_metric,
-        "poison_label": poison_label,
+        "retrieved_group_label": retrieved_group_label,
+        "pood_training_label_mode": args.pood_training_label,
+        "poison_label": poison_training_label,
         "unique_pood_samples": args.p,
         "poison_repeats": args.poison_repeats,
         "injected_poison_records": len(poison_local_indices),
@@ -800,8 +837,15 @@ def run(args: argparse.Namespace) -> Path:
             "k": args.k,
             "p": args.p,
             **source_metadata,
-            "cifar10_poison_label": poison_label,
-            "cifar10_poison_class": cifar10_test.classes[poison_label],
+            "cifar10_retrieved_group_label": retrieved_group_label,
+            "cifar10_retrieved_group_class": (
+                cifar10_test.classes[retrieved_group_label]
+            ),
+            "pood_training_label_mode": args.pood_training_label,
+            "cifar10_poison_label": poison_training_label,
+            "cifar10_poison_class": (
+                cifar10_test.classes[poison_training_label]
+            ),
             "selected_source_indices": selected_source_indices,
             score_key: selected_similarities.tolist(),
             "selection_metrics": selection_metrics,
@@ -823,6 +867,11 @@ def run(args: argparse.Namespace) -> Path:
         "poison_injection": {
             "enabled": args.experiment_mode != "no_pood",
             "experiment_mode": args.experiment_mode,
+            "training_label_mode": args.pood_training_label,
+            "training_label": poison_training_label,
+            "training_label_class": (
+                cifar10_test.classes[poison_training_label]
+            ),
             "malicious_client_id": args.malicious_client_id,
             "benign_client_sample_count": len(benign_malicious_dataset),
             "unique_pood_samples": args.p,
@@ -842,6 +891,9 @@ def run(args: argparse.Namespace) -> Path:
                 else "federaser_partial_data"
             ),
             "delta_t": args.unlearning_delta_t,
+            "history_update_semantics": history.get(
+                "history_update_semantics", "single_retained_round"
+            ),
             "snapshot_count": len(history["snapshots"]),
             "history_saved_to_disk": args.keep_unlearning_history,
             "history_path": (

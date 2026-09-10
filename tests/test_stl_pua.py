@@ -5,6 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from fl_sim.STL_PUA import build_stl_parser
+from fl_sim.STL_PUA_TargetLabel import build_target_label_parser
 from fl_sim.stl_pood import (
     STL10_TO_CIFAR10,
     build_stl10_cifar_transform,
@@ -85,6 +86,15 @@ class StlPoodTests(unittest.TestCase):
         self.assertEqual(args.pood_dataset, "stl10")
         self.assertEqual(args.stl10_split, "test")
         self.assertEqual(args.output_dir, "stl_pua_runs")
+        self.assertEqual(args.non_iid_alpha, 0.1)
+        self.assertEqual(args.pood_training_label, "source")
+
+    def test_target_label_entrypoint_changes_label_treatment_defaults(self):
+        args = build_target_label_parser().parse_args([])
+        self.assertEqual(args.pood_dataset, "stl10")
+        self.assertEqual(args.pood_training_label, "target")
+        self.assertEqual(args.output_dir, "stl_pua_target_label_runs")
+        self.assertEqual(args.experiment_mode, "optimized")
         self.assertEqual(args.non_iid_alpha, 0.1)
 
 

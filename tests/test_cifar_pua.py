@@ -7,6 +7,7 @@ import torch
 from fl_sim.CIFAR_PUA import (
     DEFAULT_DIRICHLET_ALPHA,
     build_parser,
+    resolve_pood_training_label,
     latest_cifar10_checkpoint,
 )
 from fl_sim.cifar_pood import (
@@ -19,6 +20,12 @@ from fl_sim.model import build_model, extract_model_features
 
 
 class CifarPoodTests(unittest.TestCase):
+    def test_pood_training_label_can_follow_source_or_target(self):
+        self.assertEqual(resolve_pood_training_label("source", 5, 2), 5)
+        self.assertEqual(resolve_pood_training_label("target", 5, 2), 2)
+        with self.assertRaises(ValueError):
+            resolve_pood_training_label("unknown", 5, 2)
+
     def test_resnet18_exposes_512_dimensional_penultimate_features(self):
         model = build_model("cifar10").eval()
         features = extract_model_features(model, torch.randn(2, 3, 32, 32))

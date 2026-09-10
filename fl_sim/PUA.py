@@ -718,6 +718,9 @@ def run(args: argparse.Namespace) -> Path:
         "unlearning": {
             "method": "federaser_partial_data",
             "delta_t": args.unlearning_delta_t,
+            "history_update_semantics": history.get(
+                "history_update_semantics", "single_retained_round"
+            ),
             "snapshot_count": len(history["snapshots"]),
             "history_saved_to_disk": args.keep_unlearning_history,
             "history_path": (

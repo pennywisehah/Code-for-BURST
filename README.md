@@ -255,6 +255,45 @@ python -m fl_sim.STL_PUA `
 写入 `stl_pua_runs/`，其中 `summary.json` 会同时保存 STL-10 原始类别、映射后
 CIFAR-10 注入类别、缩放方式、选中源索引以及 Unlearning 前后指标。
 
+### POOD 训练标签与目标标签统一实验
+
+独立入口 `fl_sim.STL_PUA_TargetLabel` 完全复用上述检索、扰动、Non-IID 联邦训练、
+FedEraser 和指标评估流程，只改变一个实验变量：注入训练时，所有选中 POOD
+样本的标签都设为目标样本的 CIFAR-10 标签。结果默认写入
+`stl_pua_target_label_runs/`。
+
+运行参数与 `fl_sim.STL_PUA` 相同，只需把入口替换为：
+
+```powershell
+python -m fl_sim.STL_PUA_TargetLabel `
+  --proxy-checkpoint "runs/cifar10-proxy-dirichlet-alpha1/20260815-185337-786936-cifar10-fedavg-seed42/model.pt" `
+  --data-dir data `
+  --no-download `
+  --device cuda `
+  --non-iid-alpha 1 `
+  --num-clients 10 `
+  --malicious-client-id 6 `
+  --target-label 2 `
+  --target-index 25 `
+  --candidate-count 5000 `
+  --k 200 `
+  --p 5 `
+  --perturb-steps 200 `
+  --perturb-lr 0.005 `
+  --perturb-epsilon 0.031372549 `
+  --poison-repeats 100 `
+  --rounds 50 `
+  --local-epochs 1 `
+  --learning-rate 0.01 `
+  --batch-size 128 `
+  --eval-batch-size 256 `
+  --unlearning-delta-t 2 `
+  --calibration-local-epochs 1
+```
+
+控制台和 `summary.json` 会分别记录 POOD 的原始映射标签 `mapped_label` 与实际
+参与训练的 `training_label`，便于和原始 `fl_sim.STL_PUA` 实验进行严格对照。
+
 ### POOD 检索消融与必要对照
 
 `fl_sim.STL_PUA` 默认使用余弦 Top-K 和优化后的 POOD。以下参数可在保持训练、
@@ -285,8 +324,9 @@ FedEraser 历史完成本次 Unlearning，默认不再写入体积很大的
 ## FedEraser部分数据遗忘
 
 FedEraser需要在原始联邦训练期间保存历史客户端更新。`unlearning_delta_t`
-表示每隔多少轮保存一次更新；如果最后一轮不是该间隔的整数倍，程序也会保存
-最后一轮。当前基线要求使用FedAvg：
+表示历史校准区间长度。程序会按客户端将区间内各轮更新逐元素累加，并保存该
+累计更新供Unlearning阶段计算分层历史范数；如果最后剩余轮数不足一个完整
+区间，也会保存这个较短的末尾区间。当前基线要求使用FedAvg：
 
 ```bash
 FUA/bin/python -m fl_sim \
