@@ -255,6 +255,72 @@ python -m fl_sim.STL_PUA `
 写入 `stl_pua_runs/`，其中 `summary.json` 会同时保存 STL-10 原始类别、映射后
 CIFAR-10 注入类别、缩放方式、选中源索引以及 Unlearning 前后指标。
 
+### 串行多目标 POOD 遗忘集合实验
+
+独立入口 `fl_sim.STL_PUA_Group` 将原来的单目标流程串行执行 `m` 次。每个目标
+样本都独立完成 Top-K 检索、选取 `p` 个 POOD 样本以及通用扰动优化；代码不会
+把多个目标合并成一个新的优化目标。随后，将得到的 `m × p` 个扰动 POOD 样本
+拼接为一个大集合，统一加入指定客户端的训练集，并在 FedEraser 阶段一次性遗忘
+该集合的全部注入记录。
+
+Windows PowerShell 示例（`m=10`、每个目标 `p=5`）：
+
+```powershell
+python -m fl_sim.STL_PUA_Group `
+  --proxy-checkpoint "runs/cifar10-proxy-dirichlet-alpha1/20260815-185337-786936-cifar10-fedavg-seed42/model.pt" `
+  --data-dir data `
+  --no-download `
+  --device cuda `
+  --seed 42 `
+  --non-iid-alpha 0.1 `
+  --num-clients 10 `
+  --malicious-client-id 6 `
+  --target-label 2 `
+  --target-count 10 `
+  --candidate-count 5000 `
+  --k 200 `
+  --p 5 `
+  --perturb-steps 200 `
+  --perturb-lr 0.005 `
+  --perturb-epsilon 0.031372549 `
+  --poison-repeats 100 `
+  --rounds 50 `
+  --local-epochs 1 `
+  --learning-rate 0.01 `
+  --batch-size 128 `
+  --eval-batch-size 256 `
+  --unlearning-delta-t 2 `
+  --calibration-local-epochs 1
+```
+
+未指定具体索引时，会按 CIFAR-10 测试集顺序选择前 `m` 个被代理模型正确分类、
+且属于 `--target-label` 的不同样本。需要完全固定目标集合时，可额外传入：
+
+```text
+--target-indices INDEX_1,INDEX_2,...,INDEX_M
+```
+
+该列表长度必须等于 `--target-count`，且不能同时使用旧的单样本参数
+`--target-index`。每个 POOD 样本会重复 `--poison-repeats` 次，因此实际注入记录数为
+`m × p × poison_repeats`。`summary.json` 的 `targets` 保存逐目标结果，
+`target_group` 保存成功数量、全部目标成功率、遗忘前正确样本上的条件成功率、
+目标集合准确率以及平均真实标签置信度变化。
+
+### 多恶意客户端共同作用于一个目标
+
+`CIFAR_PUA`、`STL_PUA` 和 `STL_PUA_Group` 支持使用逗号分隔的客户端编号：
+
+```text
+--malicious-client-ids 4,7
+```
+
+该选项存在时会覆盖兼容旧命令保留的 `--malicious-client-id`。POOD总注入预算
+不会随着恶意客户端数量增加：代码将 `p × target_count × poison_repeats` 条记录
+以轮询方式尽量平均分配给所有恶意客户端，并在FedEraser阶段同时从各客户端
+删除其对应的注入记录。例如单目标、`p=60`、`poison_repeats=1`、客户端4和7时，
+两个客户端各得到并遗忘30条记录。`summary.json` 会保存各客户端的注入数量及
+本地遗忘索引范围。
+
 ### POOD 训练标签与目标标签统一实验
 
 独立入口 `fl_sim.STL_PUA_TargetLabel` 完全复用上述检索、扰动、Non-IID 联邦训练、

@@ -5,6 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from fl_sim.STL_PUA import build_stl_parser
+from fl_sim.STL_PUA_Group import build_group_parser
 from fl_sim.STL_PUA_TargetLabel import build_target_label_parser
 from fl_sim.stl_pood import (
     STL10_TO_CIFAR10,
@@ -96,6 +97,13 @@ class StlPoodTests(unittest.TestCase):
         self.assertEqual(args.output_dir, "stl_pua_target_label_runs")
         self.assertEqual(args.experiment_mode, "optimized")
         self.assertEqual(args.non_iid_alpha, 0.1)
+
+    def test_group_entrypoint_runs_serial_multi_target_defaults(self):
+        args = build_group_parser().parse_args([])
+        self.assertEqual(args.pood_dataset, "stl10")
+        self.assertEqual(args.target_count, 10)
+        self.assertEqual(args.output_dir, "stl_pua_group_runs")
+        self.assertEqual(args.pood_training_label, "source")
 
 
 if __name__ == "__main__":

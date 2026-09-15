@@ -64,6 +64,9 @@ class PuaIntegrationUnitTests(unittest.TestCase):
     def test_validation_rejects_invalid_pood_shape_constraints(self):
         args = Namespace(
             target_label=3,
+            target_count=1,
+            target_index=None,
+            target_indices=None,
             malicious_client_id=0,
             num_clients=10,
             non_iid_alpha=0.1,

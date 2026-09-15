@@ -3,12 +3,20 @@ import unittest
 from pathlib import Path
 
 import torch
+from torch.utils.data import TensorDataset
 
 from fl_sim.CIFAR_PUA import (
     DEFAULT_DIRICHLET_ALPHA,
     build_parser,
-    resolve_pood_training_label,
+    choose_cifar10_targets,
+    distribute_poison_record_positions,
+    evaluate_targets,
     latest_cifar10_checkpoint,
+    parse_target_indices,
+    parse_client_ids,
+    resolve_malicious_client_ids,
+    resolve_pood_training_label,
+    summarize_target_group,
 )
 from fl_sim.cifar_pood import (
     add_cifar10_pixel_perturbation,
@@ -20,6 +28,86 @@ from fl_sim.model import build_model, extract_model_features
 
 
 class CifarPoodTests(unittest.TestCase):
+    def test_multiple_malicious_clients_split_one_total_budget_evenly(self):
+        allocation = distribute_poison_record_positions(60, [4, 7])
+        self.assertEqual(len(allocation[4]), 30)
+        self.assertEqual(len(allocation[7]), 30)
+        self.assertEqual(
+            sorted(allocation[4] + allocation[7]), list(range(60))
+        )
+        self.assertFalse(set(allocation[4]) & set(allocation[7]))
+
+    def test_plural_malicious_client_option_overrides_legacy_single_option(self):
+        args = build_parser().parse_args(
+            ["--malicious-client-id", "6", "--malicious-client-ids", "4,7"]
+        )
+        self.assertEqual(parse_client_ids("4,7"), [4, 7])
+        self.assertEqual(resolve_malicious_client_ids(args), [4, 7])
+        with self.assertRaisesRegex(Exception, "unique"):
+            parse_client_ids("4,4")
+
+    def test_group_evaluation_returns_one_record_per_target(self):
+        model = build_model("cifar10")
+        evaluations = evaluate_targets(
+            model.state_dict(),
+            torch.randn(3, 3, 32, 32),
+            torch.tensor([1, 2, 3]),
+            torch.device("cpu"),
+        )
+        self.assertEqual(len(evaluations), 3)
+        self.assertEqual([item["true_label"] for item in evaluations], [1, 2, 3])
+        self.assertTrue(
+            all(
+                0.0 <= item["true_label_confidence"] <= 1.0
+                for item in evaluations
+            )
+        )
+
+    def test_multiple_targets_are_distinct_and_proxy_correct(self):
+        class EncodedPredictionModel(torch.nn.Module):
+            def forward(self, inputs):
+                predictions = inputs[:, 0].to(torch.long)
+                logits = torch.zeros(len(inputs), 10)
+                return logits.scatter_(1, predictions.unsqueeze(1), 1.0)
+
+        dataset = TensorDataset(
+            torch.tensor([[2.0], [3.0], [2.0], [2.0]]),
+            torch.tensor([2, 2, 2, 2]),
+        )
+        targets = choose_cifar10_targets(
+            EncodedPredictionModel(),
+            dataset,
+            target_label=2,
+            target_count=3,
+            target_index=None,
+            target_indices=None,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual([target[0] for target in targets], [0, 2, 3])
+
+    def test_target_indices_parser_requires_unique_integers(self):
+        self.assertEqual(parse_target_indices("25, 42,108"), [25, 42, 108])
+        with self.assertRaisesRegex(Exception, "unique"):
+            parse_target_indices("25,25")
+
+    def test_target_group_summary_reports_all_and_conditional_success_rates(self):
+        before = [
+            {"correct": True, "prediction": 2, "true_label_confidence": 0.8},
+            {"correct": True, "prediction": 2, "true_label_confidence": 0.7},
+            {"correct": False, "prediction": 4, "true_label_confidence": 0.1},
+        ]
+        after = [
+            {"correct": False, "prediction": 4, "true_label_confidence": 0.2},
+            {"correct": True, "prediction": 2, "true_label_confidence": 0.6},
+            {"correct": True, "prediction": 2, "true_label_confidence": 0.5},
+        ]
+        summary = summarize_target_group(before, after)
+        self.assertEqual(summary["success_count"], 1)
+        self.assertAlmostEqual(summary["success_rate"], 1 / 3)
+        self.assertAlmostEqual(summary["conditional_success_rate"], 1 / 2)
+        self.assertAlmostEqual(summary["accuracy_before"], 2 / 3)
+        self.assertAlmostEqual(summary["accuracy_after"], 2 / 3)
+
     def test_pood_training_label_can_follow_source_or_target(self):
         self.assertEqual(resolve_pood_training_label("source", 5, 2), 5)
         self.assertEqual(resolve_pood_training_label("target", 5, 2), 2)
@@ -109,6 +197,8 @@ class CifarPoodTests(unittest.TestCase):
         self.assertEqual(args.non_iid_alpha, DEFAULT_DIRICHLET_ALPHA)
         self.assertEqual(args.non_iid_alpha, 0.1)
         self.assertEqual(args.num_clients, 10)
+        self.assertEqual(args.target_count, 1)
+        self.assertIsNone(args.target_indices)
         self.assertGreaterEqual(args.k, args.p)
         self.assertAlmostEqual(args.perturb_epsilon, 8 / 255)
         self.assertEqual(args.retrieval_metric, "cosine")

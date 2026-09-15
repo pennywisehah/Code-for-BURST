@@ -5,7 +5,7 @@ import csv
 import json
 import random
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +51,7 @@ class PoisonedClientDataset(Dataset):
         poison_images: torch.Tensor,
         poison_labels: torch.Tensor,
         repeats: int,
+        poison_record_positions: Sequence[int] | None = None,
     ) -> None:
         if len(poison_images) != len(poison_labels) or len(poison_images) < 1:
             raise ValueError("POOD images and labels must be aligned and non-empty.")
@@ -61,16 +62,29 @@ class PoisonedClientDataset(Dataset):
         self.poison_labels = poison_labels.detach().cpu().to(torch.long)
         self.repeats = repeats
         self.benign_count = len(benign_dataset)
+        total_records = len(self.poison_images) * repeats
+        if poison_record_positions is None:
+            self.poison_record_positions = tuple(range(total_records))
+        else:
+            positions = tuple(int(position) for position in poison_record_positions)
+            if not positions:
+                raise ValueError("Each malicious client needs at least one POOD record.")
+            if any(position < 0 or position >= total_records for position in positions):
+                raise IndexError("A POOD record position is outside the repeated set.")
+            if len(set(positions)) != len(positions):
+                raise ValueError("POOD record positions must be unique per client.")
+            self.poison_record_positions = positions
 
     def __len__(self) -> int:
-        return self.benign_count + len(self.poison_images) * self.repeats
+        return self.benign_count + len(self.poison_record_positions)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
         if index < 0 or index >= len(self):
             raise IndexError(index)
         if index < self.benign_count:
             return self.benign_dataset[index]
-        poison_index = (index - self.benign_count) % len(self.poison_images)
+        record_position = self.poison_record_positions[index - self.benign_count]
+        poison_index = record_position % len(self.poison_images)
         return self.poison_images[poison_index], int(self.poison_labels[poison_index])
 
     @property

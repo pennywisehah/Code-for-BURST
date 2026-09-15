@@ -177,6 +177,7 @@ def federaser_unlearn(
     device: torch.device,
     seed: int,
     reconstruct_without_forgetting: bool = False,
+    forget_requests: Mapping[int, Sequence[int]] | None = None,
 ) -> tuple[dict[str, torch.Tensor], list[dict[str, float | int]]]:
     """Run FedEraser calibration for client-level or partial client-data removal."""
     if history.get("method") != "federaser":
@@ -188,7 +189,23 @@ def federaser_unlearn(
         raise ValueError("forget_client_id is outside the configured client range.")
     if calibration_local_epochs < 1 or calibration_learning_rate <= 0:
         raise ValueError("Calibration epochs and learning rate must be positive.")
-    if reconstruct_without_forgetting and (forget_all_client_data or forget_local_indices):
+    normalized_requests = {
+        int(client_id): [int(index) for index in indices]
+        for client_id, indices in (forget_requests or {}).items()
+    }
+    if any(
+        client_id < 0 or client_id >= len(client_datasets)
+        for client_id in normalized_requests
+    ):
+        raise ValueError("A forget-request client id is outside the configured range.")
+    if any(not indices for indices in normalized_requests.values()):
+        raise ValueError("Each partial-data forget request needs at least one index.")
+    if normalized_requests and (forget_all_client_data or forget_local_indices):
+        raise ValueError(
+            "Do not combine multi-client forget requests with legacy forget options."
+        )
+    has_partial_request = bool(normalized_requests or forget_local_indices)
+    if reconstruct_without_forgetting and (forget_all_client_data or has_partial_request):
         raise ValueError(
             "Reconstruction without forgetting cannot include a forget request."
         )
@@ -197,15 +214,21 @@ def federaser_unlearn(
     if (
         not reconstruct_without_forgetting
         and not forget_all_client_data
-        and not forget_local_indices
+        and not has_partial_request
     ):
         raise ValueError("Partial-data unlearning requires at least one local index.")
 
     retained_datasets = list(client_datasets)
     if not reconstruct_without_forgetting and not forget_all_client_data:
-        retained_datasets[forget_client_id] = remove_local_samples(
-            retained_datasets[forget_client_id], forget_local_indices or []
-        )
+        if normalized_requests:
+            for client_id, indices in normalized_requests.items():
+                retained_datasets[client_id] = remove_local_samples(
+                    retained_datasets[client_id], indices
+                )
+        else:
+            retained_datasets[forget_client_id] = remove_local_samples(
+                retained_datasets[forget_client_id], forget_local_indices or []
+            )
 
     unlearned_state = _clone_state(history["initial_state"])
     calibration_history: list[dict[str, float | int]] = []

@@ -136,6 +136,49 @@ class FedEraserTests(unittest.TestCase):
         )
         self.assertEqual(calibration_history[0]["retained_samples"], 2)
 
+    def test_partial_unlearning_removes_records_from_multiple_clients(self):
+        initial_state = build_model("mnist").state_dict()
+        zero_update = {
+            name: torch.zeros_like(value)
+            for name, value in initial_state.items()
+            if value.is_floating_point()
+        }
+        history = {
+            "method": "federaser",
+            "config": {"aggregation": "fedavg", "dataset": "mnist"},
+            "initial_state": initial_state,
+            "snapshots": [
+                {
+                    "round": 1,
+                    "client_ids": [0, 1],
+                    "sample_counts": [3, 3],
+                    "updates": [zero_update, zero_update],
+                }
+            ],
+        }
+        clients = [
+            TensorDataset(torch.randn(3, 1, 28, 28), torch.tensor([0, 1, 2])),
+            TensorDataset(torch.randn(3, 1, 28, 28), torch.tensor([3, 4, 5])),
+        ]
+        _, calibration_history = federaser_unlearn(
+            history=history,
+            client_datasets=clients,
+            forget_client_id=0,
+            forget_local_indices=None,
+            forget_all_client_data=False,
+            calibration_local_epochs=1,
+            calibration_learning_rate=0.01,
+            batch_size=2,
+            momentum=0.0,
+            weight_decay=0.0,
+            num_workers=0,
+            device=torch.device("cpu"),
+            seed=42,
+            forget_requests={0: [2], 1: [1, 2]},
+        )
+        self.assertEqual(calibration_history[0]["retained_clients"], 2)
+        self.assertEqual(calibration_history[0]["retained_samples"], 3)
+
     def test_interval_history_runs_nonzero_calibration_without_nan(self):
         initial_state = build_model("mnist").state_dict()
         round_update = {
