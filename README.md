@@ -114,12 +114,12 @@ runs/时间-数据集-聚合方式-seed/
 python3 -m unittest discover -s tests -v
 ```
 
-## MNIST/QMNIST POOD 最小构造
+## MNIST/QMNIST 公共辅助数据构造
 
 使用训练完成的 MNIST 全局模型，从 MNIST 测试集选择一个被正确分类的目标
 样本，并从 QMNIST `test50k` 随机抽取候选池。候选池会先删除与目标相同标签
 的样本，再用 CNN2 的 128 维倒数第二层特征执行余弦 kNN，并从近邻中选择
-数量最多的同标签组作为 `p` 个 POOD 种子样本。
+数量最多的同标签组作为 `p` 个公共辅助种子样本（public auxiliary samples）。
 
 筛选完成后，程序会进一步优化一个由全部 `p` 个样本共享的通用扰动。优化目标
 是最小化扰动样本特征与目标样本特征之间的平均 L2 距离。扰动在原始 `[0, 1]`
@@ -128,7 +128,7 @@ python3 -m unittest discover -s tests -v
 默认自动使用 `runs/` 下最新的 `model.pt`：
 
 ```bash
-FUA/bin/python -m fl_sim.pood \
+python3 -m fl_sim.pood \
   --device cpu \
   --target-label 3 \
   --candidate-count 1000 \
@@ -142,13 +142,13 @@ FUA/bin/python -m fl_sim.pood \
 也可以明确指定模型：
 
 ```bash
-FUA/bin/python -m fl_sim.pood \
+python3 -m fl_sim.pood \
   --checkpoint runs/实验目录/model.pt \
   --device cpu
 ```
 
 结果保存在 `pood_runs/`，包括 `summary.json`、`pood_knn.pt`、目标样本、完整
-kNN 邻居图、同标签 POOD 种子图和添加通用扰动后的 `perturbed_pood.png`。
+kNN 邻居图、同标签辅助种子图和添加通用扰动后的 `perturbed_pood.png`。
 `summary.json` 会记录优化前后的平均特征距离、平均目标特征相似度以及扰动范数。
 
 ## FedEraser部分数据遗忘
@@ -158,7 +158,7 @@ FedEraser需要在原始联邦训练期间保存历史客户端更新。`unlearn
 最后一轮。当前基线要求使用FedAvg：
 
 ```bash
-FUA/bin/python -m fl_sim \
+python3 -m fl_sim \
   --config config/default.json \
   --device cpu \
   --save-unlearning-history \
@@ -170,7 +170,7 @@ FUA/bin/python -m fl_sim \
 位置10、11和12：
 
 ```bash
-FUA/bin/python -m fl_sim.unlearning \
+python3 -m fl_sim.unlearning \
   --run-dir runs/训练目录 \
   --forget-client-id 0 \
   --forget-local-indices 10,11,12 \
